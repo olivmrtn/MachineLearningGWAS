@@ -1,0 +1,14 @@
+citHeader("To cite MachineLearningGWAS in publications use:")
+
+citEntry(entry = "Manual",
+         title        = "{MachineLearningGWAS}: Machine Learning for Genome-Wide Association Studies",
+         author       = personList(as.person("Olivier M. F. Martin")),
+         year         = "2016",
+         date         = {2016-12-08},
+         url          = "https://www.github.com/olivmrtn/MachineLearningGWAS/",
+
+         textVersion  =
+           paste("Olivier M. F. Martin (2016).",
+                 "MachineLearningGWAS: Machine Learning for Genome-Wide Association Studies",
+                 "URL https://www.github.com/olivmrtn/MachineLearningGWAS/")
+)

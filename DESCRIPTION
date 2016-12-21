@@ -1,0 +1,45 @@
+Package: MachineLearningGWAS
+Type: Package
+Title: Machine Learning for Genome Wide Association Studies
+Description: Implements machine learning tools for genome-wide association studies.
+Version: 0.1.0
+Authors@R: person("Olivier M. F.", "Martin", email = "olivmrtn@gmail.com", role = c("aut", "cre"))
+Author: Olivier M. F. Martin
+Maintainer: Olivier M. F. Martin <olivmrtn@gmail.com>
+License: GPL-3
+URL: http://github.com/olivmrtn/MachineLearningGWAS
+BugReports: https://github.com/olivmrtn/MachineLearningGWAS/issues
+LazyData: TRUE
+Depends:
+    R (>= 3.2.0),
+    data.table
+Imports:
+    AnnotationDbi,
+    Biostrings,
+    BSgenome,
+    caret,
+    clusterProfiler,
+    foreach,
+    GenomeInfoDb,
+    GenomicRanges,
+    ggplot2,
+    GOSemSim,
+    gplots,
+    graphics,
+    gtools,
+    HardyWeinberg,
+    IRanges,
+    methods,
+    pbapply,
+    pROC,
+    psych,
+    S4Vectors,
+    stats,
+    SummarizedExperiment,
+    VariantAnnotation
+Suggests:
+    knitr,
+    rmarkdown,
+    devtools
+RoxygenNote: 5.0.1
+VignetteBuilder: knitr

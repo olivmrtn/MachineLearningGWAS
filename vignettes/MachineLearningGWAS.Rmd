@@ -1,0 +1,374 @@
+---
+title: "MLGWAS: Machine Learning for Genome-Wide Association Studies"
+author: "Olivier M. F. Martin"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, setup = TRUE, include = FALSE}
+knitr::opts_chunk$set(comment = NA, fig.width = 7, fig.height = 7)
+```
+
+  
+## Table of Contents
+  
+  1. [Introduction](#section-introdution)
+  2. [Installation and Citation](#section-installation)
+  3. [Importing Clinical and Genomics Data into MDT Objects](#section-import)
+  4. [Annotating MDT Objects](#section-annotations)
+  5. [Manipulating and Plotting MDT Objects](#section-mdt)
+  6. [MLGWAS Objects - Training Classifiers](#section-classifiers)
+  7. [Session Info](#section-session_info)
+
+
+<div id='section-introdution'>
+## 1. Introduction
+
+Machine learning for Genome-Wide Association Studies (GWAS) is still in its infancy and no software suite we know of currently exists. `MachineLearningGWAS` is a package for R meant to meet this need. It is freely available at \url{https://github.com/olivmrtn/MachineLearningGWAS}. This package depends on the following R packages: `caret` for machine learning, `ggplot2` for plotting and `data.table` for data manipulation. It also depends on various Bioconductor packages. Briefly, it provides an interface to: 
+  
+  1. Import VCF file and clinical data into an R S4 object named `MDT` and based on the `data.table` package;
+  
+  2. Annotate variants using Bioconductor annotations packages;
+  
+  3. Estimate different statistics for variants such as p-values for Hardy-Weinberg equilibrium tests or association tests as well as Minor Allele Frequency (MAF).
+  
+  4. Filter out variants or samples;
+  
+  5. Use this data to train classifiers using `caret` package, and organize results (classifiers, predictions, errors, feature importance) in one R S4 object named `MLGWAS` and based on the `data.table` package;
+  
+  6. Plot and analyze genomics and classification data using the `ggplot2` package.
+  
+## 2. Installation and Citation
+  
+To install the `MachineLearningGWAS`, install [R](https://www.r-project.org/) and [RStudio](https://www.rstudio.com/), and then run the following code in the R console:
+  
+```{r eval = FALSE}
+# install.packages("devtools")
+devtools::install_github("olivmrtn/MachineLearningGWAS")
+```
+  
+To load package to namespace, run the following code:
+  
+```{r message = FALSE, warning = FALSE}
+library(MachineLearningGWAS)
+```
+  
+```{r}
+citation("MachineLearningGWAS")
+```
+  
+<div id='section-import'>
+## 3. Creating MDT Objects - Importing Clinical and Genomics Data
+  
+Throughout this tutorial, we will use simulated data. Genomics data is the VCF file `snps.vcf` file and clinical data is tab-delimited file `clinical.txt`. These can be retrieved using the following commands.
+  
+```{r}
+genotype_file <- system.file("extdata", "snps.vcf", 
+                             package = "MachineLearningGWAS")
+clinical_file <- system.file("extdata", "clinical.txt", 
+                             package = "MachineLearningGWAS")
+```
+  
+Briefly, the genomics data is composed of 200 samples and 1000 SNPs, out of which only 5 of them are truly associated with the response. These are indicated in the `AS` field with a `1`. Genotypes are in the `GT` field. The data is also comprised of dbSNP rs# identifier, and quality `QUAL` and sequencing depth `DP`.
+  
+Clinical data specifies the disease status of the patient (`RESPONSE`), as well as age (`AGE`), sex (`SEX`) and patient identifier (`SampleID`).
+  
+Currently, it is only possible to import genomics data as a `list` of `VCF` objects of the `VariantAnnotation` package. This can be done using the `readVcf` function. Alternatively, if your data is divided into more than one VCF files, you can use the `readVcfDir` function in this package.
+  
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+vcf <- VariantAnnotation::readVcf(genotype_file)
+mdt <- vcfsToMDT(list(vcf))
+```
+  
+Clinical data can be imported using the `importPhenotype` function. The `response_type` argument specifies if the `RESPONSE` should be treated as a categorical or continuous variable and `sep` specifies the file separator.
+  
+```{r}
+mdt <- importPhenotype(mdt, clinical_file, response_type = "factor", sep = "\t")
+```
+
+Printing the objects shows its contents.
+
+```{r}
+mdt
+```
+
+An `MDT` object is composed of four main `data.table`: `mtable`, `annotations`, `info` and `phenotype`. These are interlinked by two identifiers (i.e. keys): `SampleID` and `FeatureID`.
+
+`SampleID`s and `FeatureID`s can be retrieve using `samples` and `features`.
+
+```{r}
+head(MachineLearningGWAS::samples(mdt))
+head(MachineLearningGWAS::features(mdt))
+```
+
+
+The `mtable` `data.table` contains genotypes coded as integers 0, 1 and 2 with the following meanings: 0: homozygote for the reference allele; 1: heterozygote; 2: homozygote for the alternative allele. Superior values correspond to other types of genotypes.
+
+```{r}
+head(mtable(mdt))
+```
+
+The `annotations` `data.table` contains annotations about features. This can be expanded using the annotate* functions as we will in the next section.
+
+```{r}
+head(annotations(mdt))
+```
+
+The `info` `data.table` contains annotations that are dependent on features and samples such as quality measures (`QUAL`) or genotypes (`GT`).
+
+```{r}
+head(MachineLearningGWAS::info(mdt))
+```
+
+The `phenotype` `data.table` contains clinical data about samples as imported by `importPhenotype`.
+
+```{r}
+head(phenotype(mdt))
+```
+
+<div id='section-annotations'>
+## 4. Annotating MDT Objects
+
+All annotations functions can be found by typing `help(annotateMDT)` in the R console. These functions append columns to the `annotations` `data.table`. 
+
+For example, we can append an univariate independence test and Hardy-Weinberg (HW) equilibrium p-values, as well as Minor Allele Frequency (MAF).
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+## Annotate Fisher's test and HW equilibrium p-values
+mdt <- annotateStat(mdt, function_list = list(FISHER = function(x, y) {    
+  stats::fisher.test(table(factor(x, c(0L, 1L, 2L)), 
+                           factor(y, c(0L, 1L))))$p.value },
+  HW = function(x, y) {    
+    HardyWeinberg::HWExact(table(factor(x, c(0L, 1L, 2L))), 
+                           verbose = FALSE)$pval
+  }), 
+  fill = NA, verbose = TRUE)
+
+# Annotate MAF
+mdt <- annotateMAF(mdt)
+```
+
+Entrez identifiers can be added using the `annotateLocation` function. This function is dependant on a `TxDb` object from Bioconductor. Here, we will be using the `TxDb.Hsapiens.UCSC.hg19.knownGene` package.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+mdt <- annotateLocation(mdt, TxDb.Hsapiens.UCSC.hg19.knownGene)
+```
+
+These Entrez identifiers can be used to query different Bioconductor annotation databases such as `org.Hs.eg.db` using `annotateBioconductor`. Here under we append gene names and associated Gene Ontology (GO) terms.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+library(org.Hs.eg.db)
+mdt <- annotateBioconductor(mdt, 
+                            annotations_db = org.Hs.eg.db, 
+                            keys_colname = "ENTREZID", 
+                            columns = c("GENENAME", "GO"))
+```
+
+Finally, `annotateCoding` allows annotating consequence of mutations and `annotateRSID` to annotate dbSNP rs identifiers.
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(SNPlocs.Hsapiens.dbSNP144.GRCh37)
+mdt <- annotateCoding(mdt, 
+                      BSgenome.Hsapiens.UCSC.hg19,
+                      TxDb.Hsapiens.UCSC.hg19.knownGene)
+
+mdt <- annotateRSID(mdt, SNPlocs.Hsapiens.dbSNP144.GRCh37)
+```
+
+Let's see results.
+
+```{r}
+head(annotations(mdt))
+```
+
+<div id='section-mdt'>
+## 5. Manipulating and Plotting MDT Objects
+
+#### Manipulating
+
+We will present five functions allowing us to manipulate `MDT` objects: `selectMDT`, `aggregateMDT, `[`, `filterMDT`, and `fillMDT`.
+
+`aggregateMDT` aggregate `FeatureID`s into Higher Level IDs, for example, Entrez identifiers or GO terms. It requires a `data.frame` specifying how to aggregate `FeatureID`s. The first column is the old `FeatureID`, the second is the new `FeatureID`. These can be easily retrieved using `selectMDT`.
+
+```{r}
+df <- selectMDT(mdt, MachineLearningGWAS::features(mdt), "ENTREZID")
+head(df)
+```
+
+This `data.frame` can be used to aggregate the `MDT` objects. As you can see, the `FeatureID` corresponds to Entrez identifiers.
+
+```{r}
+ag_mdt <- aggregateMDT(mdt, df, fun.aggregate = mean)
+ag_mdt
+head(mtable(ag_mdt))
+```
+
+The `[` and `filterMDT` are subsetting functions. `[` subsets according to `SampleID`s and `FeatureID`s whereas `filterMDT` according to some condition and data in one of the `data.table`s.
+
+For example, here we keep only `FeatureID`s 1 and 2, and `SampleID`s Sample1 and Sample2 These MUST be `character`s. Don't forget about `samples` and `features`.
+
+```{r}
+mdt[c("Sample1", "Sample2"), c("1", "2")]
+```
+
+On another hand, we can use `filterMDT` to keep only non-synonymous variants and remove those with low quality.
+
+```{r}
+mdt <- filterMDT(mdt, QUAL > 50, "info")
+mdt
+```
+
+Finally, if there are any missing entries, `fillMDT` can be used. For example, we can assume that missing values were homozygotes for the REF allele.
+
+```{r}
+fillMDT(mdt, fill = 0L)
+```
+
+#### Plotting
+
+Plotting for `MDT` is possible using `plotMDT`. Available plots are scatterplots and heatmaps. Preprocessing such as scaling, centering, and PCA and be applied beforehand. 
+
+Here under is a scatter plot of the first two principal components in sample space.
+
+```{r}
+plotMDT(mdt, 
+        type = "scatter", 
+        preprocess = c("scale", "center", "pca"), 
+        space = c("samples"), 
+        dims = c(1L, 2L))
+```
+
+Here under is a heatmap plot of associated SNPs. As you can see, there is a good separation between cases (blue) and controls (red).
+
+```{r width = 10, height = 5}
+try(plotMDT(filterMDT(mdt, INFO_AS == 1, "info"),
+        type = "heatmap", 
+        preprocess = c("scale", "center")))
+```
+
+Finally, it is possible to create Manhattan plots using any numeric value in `annotations`. Here, we will illustrate this using results from Fisher's exact test we have computed using `annotateStat`
+
+```{r}
+manhattanPlot(mdt, "FISHER")
+```
+
+
+<div id='section-classifiers'>
+## 6. MLGWAS Objects - Training Classifiers
+
+`MDT` objects can be used to train classifiers; results are contained in `MLGWAS` objects. This is possible using `trainClassifier`.
+
+This function can be thought of as a wrapper for the `train` function in the `caret` package. By default, the function is composed of two main loops corresponding to double fold cross-validation. The outer fold is specified by the `partitions` argument, a `list` of indices which define the training set. The training set is used for preprocessing (a `function` specified by the `preprocess` argument) and as input for `train`. The test set is all other indices; it is neither used preprocessing, training and will be used to estimate performance measures. It is, however, possible to set the test set as the whole dataset by setting `validation` to `FALSE`. The inner fold is handled by `train` and can be set using its `trControl` and `tuneGrid` argument. Actually, any argument can be passed on to `train`.
+
+Here under we train two classifiers using random forest (`method = 'rf'`). To make this run faster, we will only retain the associated SNPs and ten others. We will also use variables contained in `phenotype` (except `RESPONSE`).
+
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+allfeat <- MachineLearningGWAS::features(mdt)
+associated <- unique(MachineLearningGWAS::info(mdt)[INFO_AS == 1, FeatureID])
+random <- sample(allfeat[! allfeat %in% associated], 15)
+selected <- c(associated, random)
+mdt <- mdt[, selected]
+
+clas <- trainClassifier(mdt, id = "clas", phen_vars = "all", method = 'rf')
+```
+
+An `MLGWAS` object is composed of three main `data.table`: `performances`, `featimp`, `errors`. These are interlinked by fours identifiers (i.e. keys). `SampleID` and `FeatureID` are extracted from the `MDT` objects. `ClassifierID` is determined by the `id` argument when calling `trainClassifier`. Finally, `PartitionID` is determined by the names of the `partition` argument. Printing the `MLGWAS` object reveals its identifiers. It should be noted that each of these `data.table` as an associated `summary` and `plot` function.
+
+```{r}
+clas
+```
+
+`performances` contains estimates about classifier performance across different folds (partitions). It can be summarized using `summaryPerf`
+
+```{r}
+performances(clas)
+summaryPerf(clas)
+```
+
+
+`featimp` contains feature importance across folds. These values are obtained calling `varImp` for `caret`. It can be summarized using `summaryFeatimp`
+
+```{r}
+head(featimp(clas))
+head(summaryFeatimp(clas))
+```
+
+Finally, `errors` represent local residuals. It can help identify samples that are too predict. For categorical responses, `0` represents a success and `1` an error. It can be summarized using `summaryErrors`
+
+```{r}
+head(na.omit(errors(clas)))
+head(summaryErrors(clas))
+```
+
+One may with to compare performance results with a random setting. This can be done using permutations. We then bind the two objects together using `bindML`. 
+
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+perm <- trainClassifier(mdt, id = "perm",
+                        method = 'rf', phen_vars = "all", 
+                        permute = TRUE)
+fits <- bindML(clas, perm)
+```
+
+There exists different three main functions to plot `MLGWAS` objects: `plotPerf`, `plotFeatimp` and `plotErrors`.
+
+`plotPerf` plots performance measures. Here under we plot accuracy values. As expected, the classifier using the unpermuted data (`clas`) outperforms random predictions (`perm`).
+
+```{r}
+plotPerf(fits, "Accuracy")
+```
+
+`plotFeatimp` plots feature importance. Associated features are "555", "615", "666", "770", "917" and "AGE". It so happens, these are the features being selected by our classifier. The permuted classifier, on the contrary, seams to be selecting features at random.
+
+```{r}
+plotFeatimp(fits)
+```
+
+Finally, it possible to look at residual errors (i.e. per sample error) using `plotErrors`.
+
+It is also possible to create different types of models by playing around with arguments. One should also not that any argument in `train` can be passed on. For example, we can do 10 bootstraps instead of double fold cross validation with the following code.
+
+```{r eval = FALSE}
+ml <- trainClassifier(mdt, id = "boot", 
+                      partition = caret::createResample(response(mdt), 
+                                                        times = 10), 
+                      trControl = trainControl("none"), 
+                      tuneGrid = data.frame(.mtry = 5L),
+                      validation = FALSE)
+```
+
+It also possible to create a preprocessing function that only selects the 5 most associated values as determined by Fisher's exact test as follows. This can then be used as input to the `preprocess` argument.
+
+```{r eval = FALSE}
+fisherSelector <- function(x, y) {
+  pv <- apply(x, 2, function(col) {
+    fisher.test(table(factor(col, 0:2), y))$p.value
+  })
+  pv <- sort(pv)
+  selected <- names(pv)[1:5]
+  function(x) x[, selected]
+}
+```
+
+Finally, the `trainClassifiers` function allow to call `trainClassifier` iteratively using a `data.frame` of parameters. For example, instead of calling two times `trainClassifer` to get a real and a permuted classifier, one can run this code. Note: functions must be defined within a `vector`.
+
+```{r eval = FALSE}
+params <- expand.grid(method = "rf", 
+                      permuted = c(TRUE, FALSE), 
+                      preprocess = c(fisherSelector))
+params$id <- c("perm", "real")
+fits2 <- trainClassifiers(mdt, params)
+```
+
+<div id='section-session_info'>
+## 7. Session Info
+
+```{r, echo = FALSE}
+sessionInfo()
+```
