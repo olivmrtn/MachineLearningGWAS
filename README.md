@@ -35,6 +35,10 @@ devtools::install_github("olivmrtn/MachineLearningGWAS")
 library(MachineLearningGWAS)
 ```
 
+## Usage
+
+Read the vignette [here](https://cdn.rawgit.com/olivmrtn/MachineLearningGWAS/master/inst/doc/MachineLearningGWAS.html).
+
 ## Contact
 
 * Olivier M. F. Martin, Pharm.D.
